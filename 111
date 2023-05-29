@@ -1,0 +1,542 @@
+# encoding = 'utf-8'
+import queue
+from deeplab import DeeplabV3
+import cv2
+import keyboard
+import serial
+import time
+import re
+import os
+import numpy as np
+import sys
+import datetime
+import threading
+import RPi.GPIO as GPIO  # 导入GPIO库
+import time  # 导入time库
+from concurrent.futures import ThreadPoolExecutor
+from PIL import Image, ImageDraw, ImageFont
+from queue import Queue
+
+serial_jiguang = serial.Serial("/dev/ttyUSB0", 9600, timeout=0.5)
+from time import sleep
+q=queue.Queue(1)
+utctime = ''
+lat = ''
+ulat = ''
+lon = ''
+ulon = ''
+numSv = ''
+msl = ''
+cogt = ''
+cogm = ''
+sog = ''
+kph = ''
+data = ''
+strdata = ''
+gps_t = 0
+
+GPIO.setmode(GPIO.BCM)
+BUTTON_2_PIN = 18
+BUTTON_3_PIN = 25
+GPIO.setup(BUTTON_2_PIN,GPIO.IN,pull_up_down=GPIO.PUD_UP)
+GPIO.setup(BUTTON_3_PIN,GPIO.IN,pull_up_down=GPIO.PUD_UP)
+
+L1 = 23  # GPIO5控制第一行
+
+L2 = 24  # GPIO6控制第二行
+
+L3 = 8  # GPIO13控制第三行
+
+L4 = 7  # GPIO19控制第四行
+
+C1 = 5  # GPIO1控制第一列
+
+C2 = 16  # GPIO12控制第二列
+
+C3 = 20  # GPIO20控制第三列
+
+C4 = 21  # GPIO21 控制第四列
+
+GPIO.setwarnings(False)
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(L1, GPIO.OUT)
+GPIO.setup(L2, GPIO.OUT)
+GPIO.setup(L3, GPIO.OUT)
+GPIO.setup(L4, GPIO.OUT)
+GPIO.setup(C1, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+GPIO.setup(C2, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+GPIO.setup(C3, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+GPIO.setup(C4, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+def readLine(line, characters):
+    current_key= ''
+    GPIO.output(line, GPIO.LOW)
+    time.sleep(0.06)
+    if(GPIO.input(C1) == 0):
+        print(characters[0])
+        current_key=characters[0]
+    if(GPIO.input(C2) == 0):
+        print(characters[1])
+        current_key=characters[1]
+    if(GPIO.input(C3) == 0):
+        print(characters[2])
+        current_key=characters[2]
+    if(GPIO.input(C4) == 0):
+        print(characters[3])
+        current_key=characters[3]
+    GPIO.output(line, GPIO.HIGH)
+    # print(current_key)
+    return current_key
+def takePhoto():
+    obj_length=''
+    obj_width=''
+    obj_distance=''
+    obj_angle=''
+    obj_points=''
+    print("take photo...")
+    # 传感器的长度(mm)
+    sensor_length_mm = 0.440747898989
+    # 传感器的长分辨率
+    sensor_length_px = 640
+    # 传感器的长像素比例
+    sensor_scale_length = sensor_length_mm / sensor_length_px
+    # 传感器的宽度(mm)
+    sensor_width_mm = 0.32599116
+    # 传感器的宽分辨率
+    sensor_width_px = 480
+    # 传感器的宽像素比例
+    sensor_scale_width = sensor_width_mm / sensor_width_px
+    # 请输入物体在成像上的长度
+    print("请输入物体在图像上的长度(单位:像素):")
+    while True:
+        c1 = readLine(L1, ["1", "2", "3", "A"])
+        c2 = readLine(L2, ["4", "5", "6", "B"])
+        c3 = readLine(L3, ["7", "8", "9", "C"])
+        c4 = readLine(L4, ["*", "0", "#", "D"])
+    
+        if c4 == '#':
+            break
+        elif c3 == 'C':
+             print("before delete... content:"+obj_length)
+             print("after delete length"+str(len(obj_length)-1))
+             obj_length=obj_length[0:len(obj_length)-1]
+             print("after delete content:"+obj_length)
+             
+        else:
+            obj_length += c1 + c2 + c3 + c4
+    obj_length_px = float(obj_length)
+    #请输入物体在成像上的宽度
+    print("请输入物体在图像上的宽度(单位:像素):")
+    while True:
+        c1=readLine(L1, ["1", "2", "3", "A"])
+        c2=readLine(L2, ["4", "5", "6", "B"])
+        c3=readLine(L3, ["7", "8", "9", "C"])
+        c4=readLine(L4, ["*", "0", "#", "D"])
+        if c4=='#':
+            break
+        elif c3 == 'C':
+             print("before delete... content:"+obj_width)
+             print("after delete length"+str(len(obj_width)-1))
+             obj_width=obj_width[0:len(obj_width)-1]
+             print("after delete content:"+obj_width)
+        else:
+            obj_width += c1+c2+c3+c4
+    obj_width_px = float(obj_width)
+    # 物体到相机的距离
+    print("请输入物体到相机的距离(单位:mm):")
+    while True:
+        c1 = readLine(L1, ["1", "2", "3", "A"])
+        c2 = readLine(L2, ["4", "5", "6", "B"])
+        c3 = readLine(L3, ["7", "8", "9", "C"])
+        c4 = readLine(L4, ["*", "0", "#", "D"])
+        if c4 == '#':
+            break
+        elif c3 == 'C':
+             print("before delete... content:"+obj_distance)
+             print("after delete length"+str(len(obj_distance)-1))
+             obj_distance=obj_distance[0:len(obj_distance)-1]
+             print("after delete content:"+obj_distance)
+        else:
+            obj_distance += c1 + c2 + c3 + c4
+    distance = str(data)
+    focal_length_mm = 2.9
+    # 物体相对于相机的倾斜角度
+    print("请输入物体相对于相机的倾斜角度:")
+    while True:
+        c1 = readLine(L1, ["1", "2", "3", "A"])
+        c2 = readLine(L2, ["4", "5", "6", "B"])
+        c3 = readLine(L3, ["7", "8", "9", "C"])
+        c4 = readLine(L4, ["*", "0", "#", "D"])
+        if c4 == '#':
+            break
+        elif c3 == 'C':
+             print("before delete... content:"+obj_angle)
+             print("after delete length"+str(len(obj_angle)-1))
+             obj_angle=obj_angle[0:len(obj_angle)-1]
+             print("after delete content:"+obj_angle)
+        else:
+            obj_angle += c1 + c2 + c3 + c4
+    tilt_angle = float(obj_angle)
+    angle_radians = np.deg2rad(tilt_angle)
+    print(angle_radians)
+    obj_length_mm = obj_length_px * (distance / focal_length_mm) * sensor_scale_length / np.cos(
+        np.deg2rad(tilt_angle))
+    obj_width_mm = obj_width_px * (distance / focal_length_mm) * sensor_scale_width / np.cos(np.deg2rad(tilt_angle))
+    obj_area_mm2 = obj_length_mm * obj_width_mm
+
+    # 计算1像素对应在传感器上的尺寸
+    one_px = sensor_scale_length * sensor_scale_width
+    print("传感器上一像素块对应：{}平方毫米".format(one_px))
+
+    # 输入像素坐标点的个数
+    print("请输入像素坐标点个数:")
+    while True:
+        c1 = readLine(L1, ["1", "2", "3", "A"])
+        c2 = readLine(L2, ["4", "5", "6", "B"])
+        c3 = readLine(L3, ["7", "8", "9", "C"])
+        c4 = readLine(L4, ["*", "0", "#", "D"])
+        if c4 == '#':
+            break
+        elif c3 == 'C':
+             print("before delete... content:"+obj_points)
+             print("after delete length"+str(len(obj_points)-1))
+             obj_points=obj_points[0:len(obj_points)-1]
+             print("after delete content:"+obj_points)
+        else:
+            obj_points += c1 + c2 + c3 + c4
+    num_points = int(obj_points)
+    points = []
+    for i in range(num_points):
+        obj_temp_point=''
+        print("请输入x和y的坐标点{x*y},* split x and y:")
+        while True:
+            c1 = readLine(L1, ["1", "2", "3", "A"])
+            c2 = readLine(L2, ["4", "5", "6", "B"])
+            c3 = readLine(L3, ["7", "8", "9", "C"])
+            c4 = readLine(L4, ["*", "0", "#", "D"])
+            if c4 == '#':
+                break
+            elif c3 == 'C':
+                print("before delete... content:" + obj_temp_point)
+                print("after delete length" + str(len(obj_temp_point) - 1))
+                obj_temp_point = obj_temp_point[0:len(obj_temp_point) - 1]
+                print("after delete content:" + obj_temp_point)
+            else:
+                obj_temp_point += c1 + c2 + c3 + c4
+        x, y = map(int, obj_temp_point.split('*'))
+        points.append((x, y))
+        # 计算面积
+    area = 0.5 * abs(
+        sum(x * y_next - x_next * y for ((x, y), (x_next, y_next)) in zip(points, points[1:] + points[:1])))
+
+    print("物体的像素面积:{:.2f}".format(area))
+    area_ture = area * (one_px) * (distance / focal_length_mm) * (distance / focal_length_mm) / np.cos(
+        np.deg2rad(tilt_angle))
+    print("物体的真实面积:{:.2f}平方厘米".format(area_ture))
+    # 输出结果
+    print("物体的长度:{}厘米".format(obj_length_mm))
+    print("物体的宽度为:{}厘米".format(obj_width_mm))
+    print("物体的面积为:{}平方厘米".format(obj_area_mm2))
+    start_time = time.time()
+    time2 = datetime.datetime.now().strftime('%Y-%m-%d %H:%M.%S')
+ 
+    filename = os.path.join('images', 'huapojiance_{}.jpg'.format(time2))
+    cv2.putText(frame, f'area:{area}', (30, 180), cv2.FONT_ITALIC, 0.5, (0, 255, 0), 1)
+    cv2.imwrite(filename, frame)
+    print('image saved to ', filename)
+
+
+def exitOs():
+    print("press BUTTON1")
+    # future2.cancel()
+    # future1.cancel()
+    # while True:
+    #     if future2.cancelled():
+    #         cap.release()
+    #         cv2.destroyAllWindows()
+    #         break
+    # while True:
+    #     if future1.cancelled():
+    #         ser.close()
+    #         break
+    # keyboard.unhook_all()
+    # print("quit.........")
+    os._exit(0)
+
+
+def listeningbutton():
+    #print("add_hotkey")
+    #keyboard.on_press(exitOs())
+    print("press D is take photo press A is quit system press C is delete :")
+    while True:
+            c1 = readLine(L1, ["1", "2", "3", "A"])
+            c2 = readLine(L2, ["4", "5", "6", "B"])
+            c3 = readLine(L3, ["7", "8", "9", "C"])
+            c4 = readLine(L4, ["*", "0", "#", "D"])
+            if c4 == 'D':
+                takePhoto()
+            if c1 ==  'A':
+                exitOs()
+
+    #keyboard.add_hotkey(hotkey='q', callback=exitOs)
+    #keyboard.add_hotkey(hotkey='p', callback=takePhoto)
+    # try:
+    #     while True:
+    #         readLine(L1, ["1", "2", "3", "A"])
+    #         readLine(L2, ["4", "5", "6", "B"])
+    #         readLine(L3, ["7", "8", "9", "C"])
+    #         readLine(L4, ["*", "0", "#", "D"])
+    # except KeyboardInterrupt:
+    #     print("\nApplication stopped!")
+    #keyboard.hook(lambda x: exitOs(x))
+def jiguang():
+    try:
+        print("jjjjjjjjjjjjjjjjjjgggggggggggggggg")
+        global data 
+        global strdata 
+        
+        if serial_jiguang.isOpen():
+            
+            print("serial open success")
+        else:
+            print("serial open failed")
+        while True:
+            data = recv(serial_jiguang)
+            if len(data) > 7:
+                data = data[3:10]
+            else:
+                strdata="0"
+            strdata = str(data, 'ascii')
+            q.put(strdata)
+            if strdata != "" or strdata != '':
+                time_local = time.localtime(time.time())
+                dt = time.strftime("%Y-%m-%d %H:%M:%S", time_local)
+                print(strdata + "\t" + dt)
+    except Exception as e:
+                print(e)           
+def recv(serial_jiguang):
+    while True:
+        data = serial_jiguang.read_all()  # str
+        if data == '':
+            continue
+        else:
+            break
+        sleep(0.02)
+    return data
+    
+
+
+
+
+# 定义一个准备作为线程任务的函数
+def actionGetGPS():
+    print("init ser...")
+    global ser
+    ser = serial.Serial("/dev/ttyUSB1", 9600)
+    if ser.isOpen():
+        print("GPS Serial Opened! Baudrate=9600")
+    else:
+        print("GPS Serial Open Failed!")
+
+    print("gps start...")
+    # 在死循环之前初始化gps init()
+    while True:
+        GPS_read()
+        # print(lon + "\t" + lat)
+
+def GPS_read():
+    global utctime
+    global lat
+    global ulat
+    global lon
+    global ulon
+    global numSv
+    global msl
+    global cogt
+    global cogm
+    global sog
+    global kph
+    global gps_t
+    
+    if ser.inWaiting():
+        if ser.read(1) == b'G':
+            if ser.inWaiting():
+                if ser.read(1) == b'N':
+                    if ser.inWaiting():
+                        choice = ser.read(1)
+                        if choice == b'G':
+                            if ser.inWaiting():
+                                if ser.read(1) == b'G':
+                                    if ser.inWaiting():
+                                        if ser.read(1) == b'A':
+                                            # utctime = ser.read(7)
+
+                                            GGA = ser.read(70)
+                                            GGA_g = re.findall(r"\w+(?=,)|(?<=,)\w+", str(GGA))
+                                            # print(GGA_g)
+                                            if len(GGA_g) < 13:
+                                                print("GPS no found")
+                                                gps_t = 0
+                                                return 0
+                                            else:
+                                                utctime = GGA_g[0]
+                                                # lat = GGA_g[2][0]+GGA_g[2][1]+'°'+GGA_g[2][2]+GGA_g[2][3]+'.'+GGA_g[3]+'\''
+                                                lat = "%.8f" % Convert_to_degrees(str(GGA_g[2]), str(GGA_g[3]))
+                                                ulat = GGA_g[4]
+                                                # lon = GGA_g[5][0]+GGA_g[5][1]+GGA_g[5][2]+'°'+GGA_g[5][3]+GGA_g[5][4]+'.'+GGA_g[6]+'\''
+                                                lon = "%.8f" % Convert_to_degrees(str(GGA_g[5]), str(GGA_g[6]))
+                                                ulon = GGA_g[7]
+                                                numSv = GGA_g[9]
+                                                msl = GGA_g[12] + '.' + GGA_g[13] + GGA_g[14]
+                                                # print(GGA_g)
+                                                gps_t = 1
+                                                return 1
+                        elif choice == b'V':
+                            if ser.inWaiting():
+                                if ser.read(1) == b'T':
+                                    if ser.inWaiting():
+                                        if ser.read(1) == b'G':
+                                            if gps_t == 1:
+                                                VTG = ser.read(40)
+                                                VTG_g = re.findall(r"\w+(?=,)|(?<=,)\w+", str(VTG))
+                                                cogt = VTG_g[0] + '.' + VTG_g[1] + 'T'
+                                                if VTG_g[3] == 'M':
+                                                    cogm = '0.00'
+                                                    sog = VTG_g[4] + '.' + VTG_g[5]
+                                                    kph = VTG_g[7] + '.' + VTG_g[8]
+                                                elif VTG_g[3] != 'M':
+                                                    cogm = VTG_g[3] + '.' + VTG_g[4]
+                                                    sog = VTG_g[6] + '.' + VTG_g[7]
+                                                    kph = VTG_g[9] + '.' + VTG_g[10]
+                                            # print(kph)
+def Convert_to_degrees(in_data1, in_data2):
+    len_data1 = len(in_data1)
+    str_data2 = "%05d" % int(in_data2)
+    temp_data = int(in_data1)
+    symbol = 1
+    if temp_data < 0:
+        symbol = -1
+    degree = int(temp_data / 100.0)
+    str_decimal = str(in_data1[len_data1 - 2]) + str(in_data1[len_data1 - 1]) + str(str_data2)
+    f_degree = int(str_decimal) / 60.0 / 100000.0
+    # print("f_degree:", f_degree)
+    if symbol > 0:
+        result = degree + f_degree
+    else:
+        result = degree - f_degree
+    return result
+def count_red_pixels(image):
+    lower_red = np.array([0, 0, 128])
+    upper_red = np.array([80, 80, 255])
+    mask = cv2.inRange(image, lower_red, upper_red)
+    area_red = np.sum(mask > 0)
+    return area_red
+def actionShowPicWithGps():
+    try:
+        now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
+        print("now;;;;"+now)
+        print("start load deeplabv3")
+        deeplab = DeeplabV3()
+        print("loaded deeplabv3")
+        # 摄像头参数
+        width = 640  # 分辨率宽
+        height = 480  # 分辨率高
+        sensor_length_mm = 0.440747898989
+        sensor_length_px = 640
+        sensor_scale_length = sensor_length_mm / sensor_length_px
+        sensor_width_mm = 0.32599116
+        sensor_width_px = 480
+        sensor_scale_width = sensor_width_mm / sensor_width_px
+        video_save_folder = "./img_out"
+
+        print("init camera ...")
+        global cap
+        cap=cv2.VideoCapture(0)
+        if video_save_folder != "":
+            print("video_save_folder !='' ")
+            if not os.path.exists(video_save_folder):
+                os.makedirs(video_save_folder)
+                print("video_save_folder !    os.makedirs(video_save_folder)               ='' ")
+            else:
+                         print("video_save_folder     j,;o555555555                            ='' ")
+           
+            video_save_path = os.path.join(video_save_folder, f"{now}.avi")
+            print("video_save_path ---'' "+video_save_path)
+            fourcc = cv2.VideoWriter_fourcc(*'XVID')
+            size = (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+            out = cv2.VideoWriter(video_save_path, fourcc, 25, size)
+        else:
+             print("video_save_folder =='' ")
+
+        print("show pic ...")
+        oldValue="0"
+        while True:
+            start_time = time.time()
+            time1 = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
+
+
+              #  print(strdata + "\t" + dt)
+            # print("log:" + lon + "\tlat:" + lat)
+            global frame
+            hx,frame=cap.read()
+            if hx is True:
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                frame_img = Image.fromarray(np.uint8(frame_rgb))
+                frame_processed = np.array(deeplab.detect_image(frame_img))
+                frame_processed_bgr = cv2.cvtColor(frame_processed, cv2.COLOR_RGB2BGR)
+                area_red = count_red_pixels(frame_processed_bgr)
+                real_area = area_red * sensor_scale_length * sensor_scale_width
+                print(f"Red pixels area: {area_red}")
+                print(f"Real area: {real_area} square millimeters")
+
+
+
+                fps = 1 / (time.time() - start_time)
+                cv2.putText(frame, "fps:", (30, 30), cv2.FONT_ITALIC, 0.5, (0, 255, 0), 1)
+                cv2.putText(frame, str(round(fps, 2)), (100, 30), cv2.FONT_ITALIC, 0.5, (0, 255, 0), 1)
+                font = ImageFont.truetype("Arial.ttf", 20)
+                cv2.putText(frame, f'altitude:{lat}', (30, 60), cv2.FONT_ITALIC, 0.5, (0, 255, 0), 1)
+                cv2.putText(frame, f'longitude:{lon}', (30, 90), cv2.FONT_ITALIC, 0.5, (0, 255, 0), 1)
+                cv2.putText(frame, f'altitude:{msl}', (30, 120), cv2.FONT_ITALIC, 0.5, (0, 255, 0), 1)
+                getvalue=q.get()
+                if oldValue==getvalue or getvalue=='':
+                    cv2.putText(frame, f'data:{oldValue}',(30, 180), cv2.FONT_ITALIC, 0.5, (0, 255, 0), 1)
+                else:
+                    cv2.putText(frame, f'data:{getvalue}',(30, 180), cv2.FONT_ITALIC, 0.5, (0, 255, 0), 1)
+                    oldValue=getvalue
+                print(strdata)
+                cv2.putText(frame, f"huapo pixels area: {area_red}", (30, 210), cv2.FONT_ITALIC, 0.5, (0, 255, 0), 1)
+                cv2.putText(frame, f"Real area: {real_area:.2f} mm^2", (30, 240), cv2.FONT_ITALIC, 0.5,(0, 255, 0), 1)
+                cv2.putText(frame, str(time1), (30, 150), cv2.FONT_ITALIC, 0.5, (0, 255, 0), 1)
+                cv2.namedWindow('video',cv2.WINDOW_AUTOSIZE)
+                cv2.imshow('video',frame)
+                cv2.waitKey(10)
+                # if cv2.waitKey(1)&0xFF==ord('q'):
+                #     break
+    except Exception as e:
+        print("actionShowPicWithGpsException:::"+e)
+
+# 创建一个包含2条线程的线程池
+pool = ThreadPoolExecutor(max_workers=5)
+# 向线程池提交一个task, 50会作为action()函数的参数
+future1 = pool.submit(actionGetGPS)
+# 向线程池再提交一个task, 100会作为action()函数的参数
+future2 = pool.submit(actionShowPicWithGps)
+# task监听按键
+future3 = pool.submit(listeningbutton)
+#jiguang test
+future4 = pool.submit(jiguang)
+
+# 判断future1代表的任务是否结束
+print(future1.done())
+# 判断future2代表的任务是否结束
+print(future2.done())
+1
+# 判断future3代表的任务是否结束
+print(future3.done())
+
+# 判断future4代表的任务是否结束
+print(future4.done())
+
+
+# 关闭线程池
+pool.shutdown()
